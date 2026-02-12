@@ -84,7 +84,7 @@ def write_to_postgres(df):
     pg_password = os.getenv("PG_PASSWORD")
 
     if not pg_user or not pg_password:
-        raise Exception("❌ PostgreSQL credentials not set in environment variables")
+        raise Exception(" PostgreSQL credentials not set in environment variables")
 
     (
         df.write.format("jdbc")
@@ -103,22 +103,23 @@ def load_stage_data():
     Main ETL Pipeline
     """
 
-    print("🚀 Starting Stage Load Pipeline...")
+    print(" Starting Stage Load Pipeline...")
 
     spark = create_spark_session()
     schema = define_schema()
 
     df = load_csv_data(spark, schema)
-    print("✅ CSV Loaded Successfully")
+    print(" CSV Loaded Successfully")
 
     df = transform_data(df)
-    print("✅ Data Transformations Applied")
+    print(" Data Transformations Applied")
 
     write_to_postgres(df)
-    print("✅ Stage Load Completed Successfully")
+    print("Stage Load Completed Successfully")
 
     spark.stop()
 
 
 if __name__ == "__main__":
     load_stage_data()
+
