@@ -1,109 +1,124 @@
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, DateType, TimestampType
-from pyspark.sql.functions import col, when
-
-# ---------------------------
-# Environment setup
-# ---------------------------
-os.environ['HADOOP_HOME'] = "C:\\hadoop"
-os.environ['PATH'] += os.pathsep + "C:\\hadoop\\bin"
-
-# ---------------------------
-# Spark session
-# ---------------------------
-spark = SparkSession.builder \
-    .appName("Attendance ETL") \
-    .config("spark.jars.packages", "org.postgresql:postgresql:42.7.8") \
-    .getOrCreate()
-
-spark.sparkContext.setLogLevel("WARN")
-print("🚀 Spark session started successfully!")
-
-# ---------------------------
-# PostgreSQL connection details
-# ---------------------------
-postgres_url = "jdbc:postgresql://localhost:5432/stage_db"  # replace with your DB
-postgres_properties = {
-    "user": "postgres",
-    "password": "sha@17",
-    "driver": "org.postgresql.Driver"
-}
-
-# ---------------------------
-# Stage CSV file path
-# ---------------------------
-stage_file_path = "C:/Users/SHALINI/OneDrive/Desktop/attendance project/attendance.csv"
-
-# ---------------------------
-# Define schema for CSV
-# ---------------------------
-schema = StructType([
-    StructField("First_Name", StringType(), True),
-    StructField("Last_Name", StringType(), True),
-    StructField("ID", StringType(), True),
-    StructField("Department", StringType(), True),
-    StructField("Attendance_Group", StringType(), True),
-    StructField("Date", StringType(), True),  # Will convert to DateType later
-    StructField("Week", StringType(), True),
-    StructField("Check_In_Time", StringType(), True),  # Will convert to TimestampType
-    StructField("Skin_Surface_Temperature", StringType(), True),
-    StructField("Temperature_Status", StringType(), True),
-    StructField("Card_Swiping_Type", StringType(), True),
-    StructField("Verification_Method", StringType(), True),
-    StructField("Attendance_Check_Point", StringType(), True),
-    StructField("Custom_Name", StringType(), True),
-    StructField("Data_Source", StringType(), True),
-    StructField("Correction_Type", StringType(), True),
-    StructField("Note", StringType(), True)
-])
-
-# ---------------------------
-# Load stage CSV data
-# ---------------------------
-df_stage = spark.read.csv(stage_file_path, header=True, schema=schema)
-
-# Convert Date and Timestamp columns
-df_stage = df_stage.withColumn("Date", col("Date").cast(DateType()))
-df_stage = df_stage.withColumn("Check_In_Time", col("Check_In_Time").cast(TimestampType()))
-
-print(f"📥 Stage data loaded — {df_stage.count()} records")
-
-# ---------------------------
-# Write to PostgreSQL stage table
-# ---------------------------
-df_stage.write.jdbc(
-    url=postgres_url,
-    table="attendance_stage",  # public schema table
-    mode="overwrite",  # use "append" if you don't want to overwrite
-    properties=postgres_properties
-)
-print("✅ Stage data written to PostgreSQL successfully!")
-
-# ---------------------------
-# Data Warehouse transformations
-# ---------------------------
-# Example: Simple transformation - mark "High" temperature as alert
-df_dw = df_stage.withColumn(
-    "Temp_Alert",
-    when(col("Temperature_Status") == "High", "YES").otherwise("NO")
-)
-
-# ---------------------------
-# Write to PostgreSQL DW table
-# ---------------------------
-df_dw.write.jdbc(
-    url=postgres_url,
-    table="attendance_dw",  # public schema table
-    mode="overwrite",
-    properties=postgres_properties
-)
-print("✅ DW data written to PostgreSQL successfully!")
-
-# ---------------------------
-# Stop Spark session
-# ---------------------------
-spark.stop()
-print("🚀 ETL job completed!")
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
+from pyspark.sql.functions import col
 
 
+def create_spark_session():
+    """
+    Creates Spark session with PostgreSQL JDBC driver
+    """
+
+    postgres_jar = "drivers/postgresql-42.7.8.jar"
+
+    spark = (
+        SparkSession.builder
+        .appName("LoadAttendanceStage")
+        .config("spark.jars", postgres_jar)
+        .getOrCreate()
+    )
+
+    return spark
+
+
+def define_schema():
+    """
+    Defines schema for Attendance CSV
+    """
+
+    return StructType([
+        StructField("first_name", StringType(), True),
+        StructField("last_name", StringType(), True),
+        StructField("id", StringType(), True),
+        StructField("department", StringType(), True),
+        StructField("attendance_group", StringType(), True),
+        StructField("attendance_date", StringType(), True),
+        StructField("day_of_week", StringType(), True),
+        StructField("check_in_time", StringType(), True),
+        StructField("skin_surface_temp", StringType(), True),
+        StructField("temp_status", StringType(), True),
+        StructField("card_swiping_type", StringType(), True),
+        StructField("verification_method", StringType(), True),
+        StructField("attendance_check_point", StringType(), True),
+        StructField("custom_name", StringType(), True),
+        StructField("data_source", StringType(), True),
+        StructField("correction_type", StringType(), True),
+        StructField("note", StringType(), True),
+    ])
+
+
+def load_csv_data(spark, schema):
+    """
+    Loads CSV from data folder
+    """
+
+    file_path = "data/attendance.csv"
+
+    df = (
+        spark.read.format("csv")
+        .option("header", "true")
+        .schema(schema)
+        .load(file_path)
+    )
+
+    return df
+
+
+def transform_data(df):
+    """
+    Performs datatype conversions
+    """
+
+    df = df.withColumn("attendance_date", col("attendance_date").cast("date"))
+    df = df.withColumn("check_in_time", col("check_in_time").cast(TimestampType()))
+
+    return df
+
+
+def write_to_postgres(df):
+    """
+    Writes DataFrame to PostgreSQL Stage DB
+    """
+
+    pg_user = os.getenv("PG_USER")
+    pg_password = os.getenv("PG_PASSWORD")
+
+    if not pg_user or not pg_password:
+        raise Exception(" PostgreSQL credentials not set in environment variables")
+
+    (
+        df.write.format("jdbc")
+        .option("url", "jdbc:postgresql://localhost:5432/stage_db")
+        .option("dbtable", "attendance_project")
+        .option("user", pg_user)
+        .option("password", pg_password)
+        .option("driver", "org.postgresql.Driver")
+        .mode("overwrite")
+        .save()
+    )
+
+
+def load_stage_data():
+    """
+    Main ETL Pipeline
+    """
+
+    print(" Starting Stage Load Pipeline...")
+
+    spark = create_spark_session()
+    schema = define_schema()
+
+    df = load_csv_data(spark, schema)
+    print(" CSV Loaded Successfully")
+
+    df = transform_data(df)
+    print("Data Transformations Applied")
+
+    write_to_postgres(df)
+    print(" Stage Load Completed Successfully")
+
+    spark.stop()
+
+
+if __name__ == "__main__":
+    load_stage_data()
