@@ -98,6 +98,8 @@ Place PostgreSQL JDBC driver inside
 
 ### Step 4 — Run ETL Pipeline
 
+
+
 ##  Learning Outcomes
 This project demonstrates practical concepts in:
 
@@ -119,7 +121,6 @@ This project demonstrates practical concepts in:
 
 ---
 
-##  Author
-Shalini Janarthanan  
+# Shalini Janarthanan  
 B.Tech – Artificial Intelligence & Data Science
 
