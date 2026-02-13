@@ -1,119 +1,127 @@
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, DateType, TimestampType
-from pyspark.sql.functions import col, when
+from pyspark.sql.functions import (
+    col,
+    monotonically_increasing_id,
+    when,
+    lit,
+    current_date
+)
 
 
-def run_etl_pipeline():
-
-    # ---------------------------
-    # Configure Hadoop environment
-    # ---------------------------
-    os.environ['HADOOP_HOME'] = "C:\\hadoop"
-    os.environ['PATH'] += os.pathsep + "C:\\hadoop\\bin"
-
-    # ---------------------------
-    # Create Spark session
-    # ---------------------------
-    spark = (
-        SparkSession.builder
-        .appName("Attendance ETL Pipeline")
-        .config("spark.jars.packages", "org.postgresql:postgresql:42.7.8")
-        .getOrCreate()
-    )
-
-    spark.sparkContext.setLogLevel("WARN")
-    print("Spark session started successfully")
+def load_dw_data():
 
     # ---------------------------
-    # PostgreSQL connection config
+    # JDBC & Database Configuration
     # ---------------------------
-    postgres_url = "jdbc:postgresql://localhost:5432/stage_db"
+    JDBC_JAR_PATH = "file:///C:/project/drivers/postgresql-42.7.8.jar"
 
-    postgres_properties = {
+    SOURCE_DB_NAME = "stage_db"
+    SOURCE_TABLE = "attendance_stage"
+    SOURCE_URL = f"jdbc:postgresql://localhost:5432/{SOURCE_DB_NAME}"
+
+    TARGET_DB_NAME = "dw_db"
+    TARGET_TABLE = "attendance_student"
+    TARGET_URL = f"jdbc:postgresql://localhost:5432/{TARGET_DB_NAME}"
+
+    postgres_props = {
         "user": "postgres",
         "password": "password",
         "driver": "org.postgresql.Driver"
     }
 
     # ---------------------------
-    # Source CSV file path
+    # Windows Spark Environment Setup
     # ---------------------------
-    stage_file_path = "C:/project/data/attendance.csv"
+    os.environ['HADOOP_HOME'] = "C:\\hadoop"
+    os.environ['PATH'] += os.pathsep + "C:\\hadoop\\bin"
+    os.environ['JAVA_HOME'] = "C:\\Program Files\\Java\\jdk-17"
+    os.environ['SPARK_HOME'] = "C:\\Spark\\Spark3"
 
     # ---------------------------
-    # Define schema for dataset
+    # Create Spark Session
     # ---------------------------
-    schema = StructType([
-        StructField("First_Name", StringType(), True),
-        StructField("Last_Name", StringType(), True),
-        StructField("ID", StringType(), True),
-        StructField("Department", StringType(), True),
-        StructField("Attendance_Group", StringType(), True),
-        StructField("Date", StringType(), True),
-        StructField("Week", StringType(), True),
-        StructField("Check_In_Time", StringType(), True),
-        StructField("Skin_Surface_Temperature", StringType(), True),
-        StructField("Temperature_Status", StringType(), True),
-        StructField("Card_Swiping_Type", StringType(), True),
-        StructField("Verification_Method", StringType(), True),
-        StructField("Attendance_Check_Point", StringType(), True),
-        StructField("Custom_Name", StringType(), True),
-        StructField("Data_Source", StringType(), True),
-        StructField("Correction_Type", StringType(), True),
-        StructField("Note", StringType(), True)
-    ])
-
-    # ---------------------------
-    # Load CSV into Spark DataFrame
-    # ---------------------------
-    df_stage = spark.read.csv(stage_file_path, header=True, schema=schema)
-
-    # Apply datatype conversions
-    df_stage = df_stage.withColumn("Date", col("Date").cast(DateType()))
-    df_stage = df_stage.withColumn("Check_In_Time", col("Check_In_Time").cast(TimestampType()))
-
-    record_count = df_stage.count()
-    print(f"📥 Stage data loaded — {record_count} records")
-
-    # ---------------------------
-    # Write Stage Table
-    # ---------------------------
-    df_stage.write.jdbc(
-        url=postgres_url,
-        table="attendance_stage",
-        mode="overwrite",
-        properties=postgres_properties
+    spark = (
+        SparkSession.builder
+        .appName("DWDataLoader")
+        .config("spark.jars", JDBC_JAR_PATH)
+        .getOrCreate()
     )
 
-    print(" Stage table loaded successfully")
+    try:
+        print(f" Reading data from {SOURCE_DB_NAME}.{SOURCE_TABLE}")
 
-    # ---------------------------
-    # Data Warehouse Transformations
-    # ---------------------------
-    df_dw = df_stage.withColumn(
-        "Temp_Alert",
-        when(col("Temperature_Status") == "High", "YES").otherwise("NO")
-    )
+        # ---------------------------
+        # Read Stage Table
+        # ---------------------------
+        df_stage = spark.read.jdbc(
+            url=SOURCE_URL,
+            table=SOURCE_TABLE,
+            properties=postgres_props
+        )
 
-    # ---------------------------
-    # Write Data Warehouse Table
-    # ---------------------------
-    df_dw.write.jdbc(
-        url=postgres_url,
-        table="attendance_dw",
-        mode="overwrite",
-        properties=postgres_properties
-    )
+        print(" Stage data loaded successfully")
 
-    print(" Data Warehouse table loaded successfully")
+        # ---------------------------
+        # Apply Data Warehouse Transformations
+        # ---------------------------
+        df_final = (
+            df_stage
+            .withColumn("id", monotonically_increasing_id().cast("bigint"))
+            .select(
+                col("id"),
 
-    # ---------------------------
-    # Stop Spark session
-    # ---------------------------
-    spark.stop()
-    print(" ETL pipeline completed successfully")
+                # Placeholder surrogate key (dimension not yet implemented)
+                lit(None).cast("bigint").alias("id_student"),
+
+                col("student_id").cast("string").alias("student_id"),
+                col("attendance_group"),
+                col("attendance_date").cast("date"),
+                col("day_of_week"),
+                col("check_in_time"),
+                col("skin_surface_temp"),
+                col("temp_status"),
+                col("card_swiping_type"),
+                col("verification_method"),
+                col("attendance_check_point"),
+                col("custom_name"),
+                col("data_source"),
+
+                # Clean correction_type_id before casting
+                when(col("correction_type_id") == "-", lit(None))
+                .otherwise(col("correction_type_id"))
+                .cast("int")
+                .alias("correction_type_id"),
+
+                col("note"),
+
+                # Audit / ETL metadata columns
+                lit(101).cast("bigint").alias("load_batch_id"),
+                current_date().alias("process_date"),
+                current_date().alias("load_dt"),
+                current_date().alias("updt_dt")
+            )
+        )
+
+        final_count = df_final.count()
+        print(f" Records prepared for DW: {final_count}")
+
+        # ---------------------------
+        # Write Data Warehouse Table
+        # ---------------------------
+        df_final.write \
+            .mode("overwrite") \
+            .jdbc(url=TARGET_URL, table=TARGET_TABLE, properties=postgres_props)
+
+        print(f" SUCCESS: Data loaded into {TARGET_DB_NAME}.{TARGET_TABLE}")
+
+    except Exception as e:
+        print(f" ERROR: DW Load Failed → {str(e)}")
+
+    finally:
+        spark.stop()
+        print("Spark session stopped")
 
 
 if __name__ == "__main__":
-    run_etl_pipeline()
+    load_dw_data()
