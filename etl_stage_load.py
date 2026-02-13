@@ -3,16 +3,17 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 from pyspark.sql.functions import col
 
+
 def load_stage_data():
 
-    # Hadoop Path
+    # Configure Hadoop environment
     os.environ['HADOOP_HOME'] = "C:\\hadoop"
     os.environ['PATH'] += os.pathsep + "C:\\hadoop\\bin"
 
-    # Path to PostgreSQL JDBC Driver
-    postgres_jar = "C:\\Users\\SHALINI\\OneDrive\\Desktop\\attendance project\\postgresql-42.7.8.jar"
+    # Path to PostgreSQL JDBC driver
+    postgres_jar = "C:\\project\\drivers\\postgresql-42.7.8.jar"
 
-    # Spark session
+    # Create Spark session with JDBC support
     spark = (
         SparkSession.builder
         .appName("LoadAttendanceStage")
@@ -20,7 +21,7 @@ def load_stage_data():
         .getOrCreate()
     )
 
-    # Schema for Attendance CSV
+    # Define schema for attendance dataset
     schema = StructType([
         StructField("first_name", StringType(), True),
         StructField("last_name", StringType(), True),
@@ -41,30 +42,33 @@ def load_stage_data():
         StructField("note", StringType(), True),
     ])
 
-    # Load CSV
+    # Load CSV data into Spark DataFrame
     df = (
         spark.read.format("csv")
         .option("header", "true")
         .schema(schema)
-        .load("C:\\Users\\SHALINI\\OneDrive\\Desktop\\attendance project\\attendance.csv")
+        .load("C:\\project\\data\\attendance.csv")
     )
 
-    # Convert columns
+    # Apply datatype conversions
     df = df.withColumn("attendance_date", col("attendance_date").cast("date"))
     df = df.withColumn("check_in_time", col("check_in_time").cast(TimestampType()))
 
-    # Write to Stage DB (Table: attendance_project)
+    # Write transformed data to PostgreSQL staging table
     df.write.format("jdbc") \
         .option("url", "jdbc:postgresql://localhost:5432/stage_db") \
         .option("dbtable", "attendance_project") \
         .option("user", "postgres") \
-        .option("password", "1234") \
+        .option("password", "password") \
         .option("driver", "org.postgresql.Driver") \
         .mode("overwrite") \
         .save()
 
     print("Stage Load Completed Successfully")
 
+    # Stop Spark session
+    spark.stop()
+
+
 if __name__ == "__main__":
     load_stage_data()
-
